@@ -54,7 +54,7 @@ end_for = Intern("%endfor")
 
 class Scanner(re.Scanner):
     def __init__(self, *args, **kwargs):
-        super(Lexer, self).__init__(*args, **kwargs)
+        super(Scanner, self).__init__(*args, **kwargs)
         self.body = []
 
     def append(self, x):
@@ -66,6 +66,7 @@ class Scanner(re.Scanner):
     def __call__(self, body):
         for line in body.split("\n"):
             self.scan(line)
+        return self.body
 
 
 Lexer = partial(Scanner, [
@@ -136,6 +137,7 @@ class Parser(object):
         n = len(tokens)
         while n > self.i:
             self.parse_statement(tokens)
+        return self.body
 
     def parse_statement(self, tokens):
         t = tokens[self.i]
@@ -305,6 +307,7 @@ class Compiler(object):
             # self.variables.stmt("M = object()")
             for t in tokens:
                 self.visit(t)
+        return self.m
 
     def visit(self, t):
         method = getattr(self, "visit_{}".format(t.__class__.__name__.lower()))
@@ -401,11 +404,8 @@ class Template(object):
             lexer = Lexer()
             parser = Parser()
             compiler = Compiler()
-            lexer(self.s)
-            parser(lexer.body)
-            compiler(parser.body, "render")
             env = {}
-            code = str(compiler.m)
+            code = str(compiler(parser(lexer(self.s)), name="render"))
             logger.debug("compiled code:\n%s", code)
             exec(code, env)
             fn = self.cache_manager[self.s] = env["render"]
