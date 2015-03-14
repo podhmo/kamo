@@ -121,7 +121,7 @@ class Parser(object):
         self.depth -= 1
         self.frame = frame
 
-    def parse_expr(self, expr, decorators=None, is_declared=True):  # hmm.
+    def parse_expr(self, expr, decorators=None, is_declared=False):  # hmm.
         ast_node = ast.parse(expr).body[0]
         if is_declared:
             declared = collect_variable_name(ast_node)
@@ -211,7 +211,7 @@ class Parser(object):
     def parse_else(self, tokens):
         self._create_if_block(tokens)
         self.i += 1  # skip
-        self.frame.append(("else", self.parse_expr(tokens[self.i].strip(": "))))  # hmm.
+        self.frame.append(("else", None))  # hmm.
         self.i += 1
         self.push_frame()
         self.parse_statement(tokens)
@@ -351,7 +351,10 @@ class Compiler(object):
         return result
 
     def visit_if(self, node):
-        self.m.stmt("{} {}:".format(node.keyword, self.calc_expr(node.expr)))
+        if node.expr is None:  # else
+            self.m.stmt("{}:".format(node.keyword))
+        else:
+            self.m.stmt("{} {}:".format(node.keyword, self.calc_expr(node.expr)))
         with self.m.scope():
             self._visit_children(node.body)
 
