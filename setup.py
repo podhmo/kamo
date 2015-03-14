@@ -16,7 +16,7 @@ except IOError:
 
 
 install_requires = [
-    'setuptools',
+    'prestring',
 ]
 
 
@@ -29,9 +29,9 @@ tests_require = [
 testing_extras = tests_require + [
 ]
 
-setup(name='minimako',
+setup(name='kamo',
       version='0.0',
-      description='-',
+      description='kamo is almost subset of mako, maybe',
       long_description=README + '\n\n' + CHANGES,
       classifiers=[
           "Programming Language :: Python",
@@ -50,7 +50,7 @@ setup(name='minimako',
           'docs': docs_extras,
       },
       tests_require=tests_require,
-      test_suite="minimako.tests",
+      test_suite="kamo.tests",
       entry_points="""
 """)
 

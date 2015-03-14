@@ -1,6 +1,6 @@
 # -*- coding:utf-8 -*-
 template = """\
-<%doc>minimako</%doc>
+<%doc>kamo</%doc>
 
 ## this is comment
 

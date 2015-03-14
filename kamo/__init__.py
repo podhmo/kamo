@@ -7,7 +7,7 @@ from prestring.python import PythonModule, NEWLINE
 from functools import partial
 from collections import namedtuple
 from io import StringIO
-from minimako.expr import (
+from kamo.expr import (
     WithContextExprVistor,
     collect_variable_name
 )
@@ -412,7 +412,7 @@ class Template(object):
             return fn
 
 if __name__ == "__main__":
-    from minimako._sample import template
+    from kamo._sample import template
     print("========================================")
     print("input")
     print("========================================")

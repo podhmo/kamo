@@ -1,4 +1,4 @@
-minimako
+kamo
 ========================================
 
 almost subset of mako.
@@ -7,7 +7,7 @@ almost subset of mako.
 
   # -*- coding:utf-8 -*-
   import logging
-  from minimako import Template
+  from kamo import Template
   # logging.basicConfig(level=logging.DEBUG)
 
 

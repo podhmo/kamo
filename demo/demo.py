@@ -1,6 +1,6 @@
 # -*- coding:utf-8 -*-
 import logging
-from minimako import Template
+from kamo import Template
 logging.basicConfig(level=logging.DEBUG)
 
 
