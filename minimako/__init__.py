@@ -7,8 +7,11 @@ from prestring.python import PythonModule, NEWLINE
 from functools import partial
 from collections import namedtuple
 from io import StringIO
-from minimako.expr import WithContextExprVistor
-
+from minimako.expr import (
+    WithContextExprVistor,
+    collect_variable_name
+)
+marker = object()
 """
 {module} :: {statement}+
 {statement} :: {doctag} | {comment} | {pythoncode} | {if} | {for} | {deftag} | {text}
@@ -66,9 +69,11 @@ class Lexer(re.Scanner):
 
 
 Scanner = partial(Lexer, [
+    ('\s*<%doc>(.+)(?=</%doc>)', lambda s, x: s.extend([begin_doc, s.match.group(1)])),
+    ("\s*<%(.+)(?=%>)", lambda s, x: s.extend([begin_code, s.match.group(1)])),
     ('\s*<%doc>', lambda s, x: s.append(begin_doc)),
     ('\s*</%doc>', lambda s, x: s.append(end_doc)),
-    ('\s*## .*', lambda s, x: s.extend((comment, x.lstrip("## ")))),
+    ('\s*## (.*)', lambda s, x: s.extend((comment, s.match.group(1)))),
     ("\s*<%", lambda s, x: s.append(begin_code)),
     ("\s*%>", lambda s, x: s.append(end_doc)),
     ("\s*%if", lambda s, x: s.append(begin_if)),
@@ -85,7 +90,7 @@ Module = namedtuple("Module", "body")
 Doc = namedtuple("Doc", "body multiline")
 Code = namedtuple("Code", "body")
 Text = namedtuple("Text", "body")
-Expr = namedtuple("Expr", "body ast filters")
+Expr = namedtuple("Expr", "body ast decorators declared")
 If = namedtuple("If", "keyword expr body")  # xxx: include if, elif, else
 For = namedtuple("For", "keyword expr src body")
 
@@ -115,8 +120,16 @@ class Parser(object):
         self.depth -= 1
         self.frame = frame
 
-    def parse_expr(self, expr, filters=None):  # hmm.
-        return Expr(expr, ast.parse(expr).body[0], filters=filters or [])
+    def parse_expr(self, expr, decorators=None, is_declared=True):  # hmm.
+        ast_node = ast.parse(expr).body[0]
+        if not is_declared:
+            declared = set()
+        else:
+            declared = collect_variable_name(ast_node)
+        return Expr(expr,
+                    ast_node,
+                    decorators=decorators or [],
+                    declared=declared)
 
     def __call__(self, tokens):
         self.i = 0
@@ -208,7 +221,7 @@ class Parser(object):
         self.i += 1  # skip
         # for expr in expr:
         expr, src = [e.strip(" ") for e in tokens[self.i].rsplit(" in ", 1)]
-        expr = self.parse_expr(expr.strip(" "))
+        expr = self.parse_expr(expr.strip(" "), is_declared=True)
         src = self.parse_expr(src.rstrip(": "))
         self.frame.append(("for", expr, src))
         self.i += 1
@@ -253,23 +266,42 @@ def split_with(rx, sentence):
     return r
 
 
+class _DeclaredStore(object):
+    def __init__(self):
+        self.stack = [set()]
+
+    def __contains__(self, k):
+        return any(k in frame for frame in self.stack)
+
+    def push_frame(self, s):
+        self.stack.append(s)
+
+    def pop_frame(self, s):
+        self.stack.pop(s)
+
+
 class Compiler(object):
-    def __init__(self, m=None, default=""):
+    def __init__(self, m=None, default="''", getter="c[{!r}]", default_decorators=["str"]):
         self.depth = 0
         self.m = PythonModule()
         self.variables = None
         self.default = default
+        self.getter = getter
+        self.declaredstore = _DeclaredStore()
+        self.default_decorators = default_decorators
 
-    def __call__(self, tokens, name="render", args="io, **context"):
+    def __call__(self, tokens, name="render", args="io, **c"):
         """
+        from: ${x}
         create:
-        def render(io, **context):
-            context.get("foo", "")
+          def render(io, **context):
+              context["x"]
         """
         with self.m.def_(name, args):
             self.variables = self.m.submodule()
             self.variables.stmt("write = io.write")
-            self.variables.stmt("get = context.get")
+            # self.variables.stmt("get = c.get")
+            # self.variables.stmt("M = object()")
             for t in tokens:
                 self.visit(t)
 
@@ -280,9 +312,10 @@ class Compiler(object):
     def visit_text(self, node):
         for token, is_visit_var in node.body:
             if is_visit_var:
-                self.m.stmt("write({})".format(self.calc_expr(token)))
+                self.m.stmt("write({})".format(self.calc_expr(token, emit=True)))
             else:
                 self.m.stmt("write({!r})".format(token))
+        self.m.stmt("write('\\n')")
         self.m.append(NEWLINE)
 
     def visit_doc(self, doc):
@@ -299,13 +332,16 @@ class Compiler(object):
             self.m.stmt(line)
         self.m.sep()
 
-    def calc_expr(self, expr):
+    def calc_expr(self, expr, emit=False):
         io = StringIO()
-        v = WithContextExprVistor(io, getter="get({{!r}}, {!r})".format(self.default))
+        v = WithContextExprVistor(io, self.declaredstore, getter=self.getter)
         v.visit(expr.ast)
         result = io.getvalue()
-        if expr.filters:
-            for f in expr.filters:
+        if emit:
+            if expr.decorators:
+                for f in expr.decorators:
+                    result = "{}({})".format(f, result)
+            for f in self.default_decorators:
                 result = "{}({})".format(f, result)
         return result
 
@@ -315,7 +351,8 @@ class Compiler(object):
             self._visit_children(node.body)
 
     def visit_for(self, node):
-        self.m.stmt("{} {} in {}:".format(node.keyword, self.calc_expr(node.expr), self.calc_expr(node.src)))
+        self.m.stmt("{} {} in {}:".format(node.keyword, node.expr.body, self.calc_expr(node.src)))
+        self.declaredstore.push_frame(node.expr.declared)
         with self.m.scope():
             self._visit_children(node.body)
 
@@ -329,6 +366,13 @@ class Compiler(object):
 
 if __name__ == "__main__":
     from minimako._sample import template
+    print("========================================")
+    print("input")
+    print("========================================")
+    print(template)
+    print("========================================")
+    print("compiled")
+    print("========================================")
     scanner = Scanner()
     scanner(template)
     parser = Parser()
@@ -336,3 +380,10 @@ if __name__ == "__main__":
     compiler = Compiler()
     compiler(parser.body)
     print(compiler.m)
+    env = {}
+    exec(str(compiler.m), env)
+    import sys
+    print("========================================")
+    print("output")
+    print("========================================")
+    env["render"](sys.stdout, x=10, xs=[1, 2, 3], hello="hello", boo="boooo!")

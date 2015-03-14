@@ -231,13 +231,32 @@ class ExprVisitor(ast.NodeVisitor):
         self.write('`')
 
 
+class CollectVarNameVisitor(ast.NodeVisitor):
+    def __init__(self, r):
+        self.r = r
+
+    def visit_Name(self, node):
+        self.r.add(node.id)
+
+
+def collect_variable_name(node):
+    s = set()
+    visitor = CollectVarNameVisitor(s)
+    visitor.visit(node)
+    return s
+
+
 class WithContextExprVistor(ExprVisitor):
-    def __init__(self, io, getter="get({})"):
+    def __init__(self, io, skip_candidates, getter="get({})"):
         super(WithContextExprVistor, self).__init__(io)
+        self.skip_candidates = skip_candidates
         self.getter = getter
 
     def visit_Name(self, node):
-        self.write(self.getter.format(node.id))
+        if node.id in self.skip_candidates:
+            self.write(node.id)
+        else:
+            self.write(self.getter.format(node.id))
 
     def visit_Call(self, node):  # this is almost copy
         want_comma = []

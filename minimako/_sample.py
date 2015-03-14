@@ -1,8 +1,6 @@
 # -*- coding:utf-8 -*-
 template = """\
-<%doc>
-minimako
-</%doc>
+<%doc>minimako</%doc>
 
 ## this is comment
 
@@ -11,9 +9,9 @@ def double(x):
     return x + x
 %>
 
-%if x == "10":
-  ${hello|double|double}
-  %if x == "20":
+%if (x % 2) == 0:
+${hello|double|double}
+  %if x == 10:
     ${boo}
   %endif
 %endif
