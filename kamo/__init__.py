@@ -88,13 +88,13 @@ Lexer = partial(Scanner, [
 ])
 
 
-Module = namedtuple("Module", "body")
 Doc = namedtuple("Doc", "body multiline")
 Code = namedtuple("Code", "body ast declared")
 Text = namedtuple("Text", "body")
 Expr = namedtuple("Expr", "body ast decorators declared")
 If = namedtuple("If", "keyword expr body")  # xxx: include if, elif, else
 For = namedtuple("For", "keyword expr src body")
+Optimized = namedtuple("Optimized", "tokens")
 
 
 class Parser(object):
@@ -248,13 +248,13 @@ class Parser(object):
 
     def parse_text(self, tokens):
         body = []
-        for token, is_emit_var in split_with(self.emit_var_rx, tokens[self.i]):
-            if is_emit_var:
+        for token, is_emitting_var in split_with(self.emit_var_rx, tokens[self.i]):
+            if is_emitting_var:
                 token = token[2:-1]  # ${foo} -> foo
                 token_with_filter = [e.strip(" ") for e in token.split("|")]  # foo|bar|boo -> [foo, bar, boo]
                 token = token_with_filter[0]
                 token = self.parse_expr(token, token_with_filter[1:])
-            body.append((token, is_emit_var))
+            body.append((token, is_emitting_var))
         self.frame.append(Text(body))
         self.i += 1
 
@@ -288,6 +288,58 @@ class _DeclaredStore(object):
         self.stack.pop(s)
 
 
+class Optimizer(object):
+    def optimize(self, tokens, text, result):
+        last_is_text = False
+        for t in tokens:
+            if isinstance(t, Text):
+                is_emitting_var = False
+                for pair in t.body:
+                    if pair[1] == is_emitting_var:  # is_emitting_var
+                        text.body.append(pair)
+                    else:
+                        is_emitting_var = not is_emitting_var
+                        if not (len(text.body) < 1 or text.body[0][0] == "\n"):
+                            self.compact(text)
+                            result.append(text)
+                        text = Text([pair])
+                text.body.append(("\n", False))
+                last_is_text = True
+            else:
+                if last_is_text:
+                    result.append(text)
+                    text = Text([])
+                    last_is_text = False
+
+                if isinstance(t, If):
+                    body = []
+                    self.optimize(t.body, Text([]), body)
+                    result.append(If(t.keyword, t.expr, body))
+                elif isinstance(t, For):
+                    body = []
+                    self.optimize(t.body, Text([]), body)
+                    result.append(For(t.keyword, t.expr, t.src, body))
+                else:
+                    result.append(t)
+
+        if last_is_text:
+            if not (len(text.body) < 1 or text.body[0][0] == "\n"):
+                self.compact(text)
+                result.append(text)
+
+    def compact(self, text):
+        if text.body and text.body[0][1] is False:  # text
+            body = "".join(pair[0] for pair in text.body)
+            text.body.clear()
+            text.body.append((body, False))
+
+    def __call__(self, tokens):
+        r = []
+        self.optimize(tokens, Text([]), r)
+        self.body = Optimized(r)
+        return self.body
+
+
 class Compiler(object):
     def __init__(self, m=None, default="''", getter="c[{!r}]", default_decorators=["str"]):
         self.depth = 0
@@ -297,6 +349,7 @@ class Compiler(object):
         self.getter = getter
         self.declaredstore = _DeclaredStore()
         self.default_decorators = default_decorators
+        self.optimized = False
 
     def __call__(self, tokens, name="render", args="io, **c"):
         """
@@ -305,6 +358,9 @@ class Compiler(object):
           def render(io, **context):
               context["x"]
         """
+        if isinstance(tokens, Optimized):
+            tokens = tokens.tokens
+            self.optimized = True
         with self.m.def_(name, args):
             self.variables = self.m.submodule()
             self.variables.stmt("write = io.write")
@@ -312,6 +368,7 @@ class Compiler(object):
             # self.variables.stmt("M = object()")
             for t in tokens:
                 self.visit(t)
+        self.optimized = False
         return self.m
 
     def visit(self, t):
@@ -324,7 +381,8 @@ class Compiler(object):
                 self.m.stmt("write({})".format(self.calc_expr(token, emit=True)))
             else:
                 self.m.stmt("write({!r})".format(token))
-        self.m.stmt("write('\\n')")
+        if not self.optimized:
+            self.m.stmt("write('\\n')")
         self.m.append(NEWLINE)
 
     def visit_doc(self, doc):
@@ -399,10 +457,11 @@ class TemplateNotFound(Exception):
 
 
 class TemplateManager(object):
-    def __init__(self, directories=["."], cache=default_cache):
+    def __init__(self, directories=["."], cache=default_cache, optimize=True):
         self.directories = directories
         self.render_cache = cache
         self.template_cache = {}
+        self.optimize = optimize
 
     def lookup(self, filename):
         if filename in self.template_cache:
@@ -415,19 +474,21 @@ class TemplateManager(object):
 
     def load_template(self, filename, path):
         with open(path) as rf:
-            template = Template(rf.read(), hashvalue=filename, cache=self.render_cache)
+            template = Template(rf.read(), hashvalue=filename, cache=self.render_cache, optimize=self.optimize)
         self.template_cache[filename] = template
         return template
 
     def create_template(self, s):
-        return Template(s, hashvalue=hash(s), cache=self.render_cache)
+        return Template(s, hashvalue=hash(s), cache=self.render_cache, optimize=self.optimize)
 
 
 class Template(object):
-    def __init__(self, s, hashvalue=None, cache=default_cache):
+    def __init__(self, s, hashvalue=None, cache=default_cache, optimize=True, nocache=False):
         self.s = s
         self.hashvalue = hashvalue or hash(self.s)
         self.cache = cache
+        self.nocache = nocache
+        self.optimize = optimize
 
     def render(self, **kwargs):
         io = StringIO()
@@ -435,7 +496,7 @@ class Template(object):
         return io.getvalue()
 
     def get_render_function(self):
-        if self.hashvalue in self.cache:
+        if not self.nocache and self.hashvalue in self.cache:
             logger.debug("cached: hash=%s", self.hashvalue)
             return self.cache[self.hashvalue]
         else:
@@ -443,7 +504,11 @@ class Template(object):
             parser = Parser()
             compiler = Compiler()
             env = {}
-            code = str(compiler(parser(lexer(self.s)), name="render"))
+            if self.optimize:
+                optimizer = Optimizer()
+                code = str(compiler(optimizer(parser(lexer(self.s))), name="render"))
+            else:
+                code = str(compiler(parser(lexer(self.s)), name="render"))
             logger.debug("compiled code:\n%s", code)
             exec(code, env)
             fn = self.cache[self.hashvalue] = env["render"]
@@ -462,8 +527,10 @@ if __name__ == "__main__":
     lexer(template)
     parser = Parser()
     parser(lexer.body)
+    optimizer = Optimizer()
+    optimizer(parser.body)
     compiler = Compiler()
-    compiler(parser.body)
+    compiler(optimizer.body)
     for i, line in enumerate(str(compiler.m).split("\n")):
         print("{:3< }: {}".format(i, line))
     env = {}

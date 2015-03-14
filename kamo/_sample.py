@@ -16,7 +16,7 @@ def rstrip(x):
 %if (x % 2) == 0:
 ${hello|double|double|rstrip}
   % if x == 10:
-    # this is comment
+    ## this is comment
 <%doc> comment </%doc>
     <%c["xs"].append("hai")%>
     ${boo}
@@ -26,4 +26,13 @@ ${hello|double|double|rstrip}
 %for i,x in enumerate(xs):
 * ${i} ${x}
 %endfor
+
+a b c 
+d
+e
+f
+g
+h
+i
+j
 """
