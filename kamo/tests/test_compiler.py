@@ -39,11 +39,29 @@ ${datetime.now()}
         result = str(self._callFUT(code))
         self.assertNotIn("c['datetime']", result)
 
-    def test_it2(self):
+    def test_it3(self):
         code = """
 %for datetime in xs:
     ${datetime.now()}
 %endfor
+"""
+        result = str(self._callFUT(code))
+        self.assertNotIn("c['datetime']", result)
+
+    def test_it4(self):
+        code = """
+<%
+def f(datetime):
+    pass
+%>
+${datetime.now()}
+"""
+        result = str(self._callFUT(code))
+        self.assertIn("c['datetime']", result)
+
+    def test_it5(self):
+        code = """
+${foo.datetime.now()}
 """
         result = str(self._callFUT(code))
         self.assertNotIn("c['datetime']", result)
