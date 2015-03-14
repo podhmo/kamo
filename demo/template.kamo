@@ -1,0 +1,9 @@
+<% import os; import json %>
+
+<%
+def pp(x):
+    return json.dumps(dict(x), indent=2, ensure_ascii=False)
+%>
+
+environ:
+${os.environ|pp}

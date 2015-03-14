@@ -3,6 +3,7 @@ import logging
 logger = logging.getLogger(__name__)
 import ast
 import re
+import os.path
 from prestring.python import PythonModule, NEWLINE
 from functools import partial
 from collections import namedtuple
@@ -376,27 +377,57 @@ class Compiler(object):
             self.visit(node)
 
 
-class CacheManager(object):
+class RenderFunctionCache(object):
     def __init__(self):
         self.cache = {}
 
     def __getitem__(self, s):
-        return self.cache[hash(s)]
+        return self.cache[s]
 
     def __setitem__(self, s, v):
-        self.cache[hash(s)] = v
+        self.cache[s] = v
 
     def __contains__(self, s):
-        return hash(s) in self.cache
+        return s in self.cache
 
 
-_default_cache_manager = CacheManager()
+default_cache = RenderFunctionCache()
+
+
+class TemplateNotFound(Exception):
+    pass
+
+
+class TemplateManager(object):
+    def __init__(self, directories=["."], cache=default_cache):
+        self.directories = directories
+        self.render_cache = cache
+        self.template_cache = {}
+
+    def lookup(self, filename):
+        if filename in self.template_cache:
+            return self.template_cache[filename]
+        for d in self.directories:
+            path = os.path.join(d, filename)
+            if os.path.exists(path):
+                return self.load_template(filename, path)
+        raise TemplateNotFound(filename)
+
+    def load_template(self, filename, path):
+        with open(path) as rf:
+            template = Template(rf.read(), hashvalue=filename, cache=self.render_cache)
+        self.template_cache[filename] = template
+        return template
+
+    def create_template(self, s):
+        return Template(s, hashvalue=hash(s), cache=self.render_cache)
 
 
 class Template(object):
-    def __init__(self, s, cache_manager=_default_cache_manager):
+    def __init__(self, s, hashvalue=None, cache=default_cache):
         self.s = s
-        self.cache_manager = cache_manager
+        self.hashvalue = hashvalue or hash(self.s)
+        self.cache = cache
 
     def render(self, **kwargs):
         io = StringIO()
@@ -404,9 +435,9 @@ class Template(object):
         return io.getvalue()
 
     def get_render_function(self):
-        if self.s in self.cache_manager:
-            logger.debug("cached: hash=%s", hash(self.s))
-            return self.cache_manager[self.s]
+        if self.hashvalue in self.cache:
+            logger.debug("cached: hash=%s", self.hashvalue)
+            return self.cache[self.hashvalue]
         else:
             lexer = Lexer()
             parser = Parser()
@@ -415,7 +446,7 @@ class Template(object):
             code = str(compiler(parser(lexer(self.s)), name="render"))
             logger.debug("compiled code:\n%s", code)
             exec(code, env)
-            fn = self.cache_manager[self.s] = env["render"]
+            fn = self.cache[self.hashvalue] = env["render"]
             return fn
 
 if __name__ == "__main__":
