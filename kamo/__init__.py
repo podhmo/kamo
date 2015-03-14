@@ -89,7 +89,7 @@ Lexer = partial(Scanner, [
 
 Module = namedtuple("Module", "body")
 Doc = namedtuple("Doc", "body multiline")
-Code = namedtuple("Code", "body")
+Code = namedtuple("Code", "body ast declared")
 Text = namedtuple("Text", "body")
 Expr = namedtuple("Expr", "body ast decorators declared")
 If = namedtuple("If", "keyword expr body")  # xxx: include if, elif, else
@@ -183,8 +183,12 @@ class Parser(object):
             body.append(tokens[self.i])
             self.i += 1
         self.i += 1  # skip
-        code = self.parse_expr("\n".join(body), is_declared=True)
-        self.frame.append(Code(code))
+        body = "\n".join(body)
+        ast_node = ast.parse(body)
+        declared = collect_variable_name(ast_node)
+        self.frame.append(Code(body,
+                               ast_node,
+                               declared=declared))
 
     def parse_if(self, tokens):
         self.i += 1  # skip
@@ -332,9 +336,9 @@ class Compiler(object):
             self.m.sep()
 
     def visit_code(self, code):
-        for line in code.body.body.split("\n"):  # xxx:
+        for line in code.body.split("\n"):  # xxx:
             self.m.stmt(line)
-        self.declaredstore.push_frame(code.body.declared)
+        self.declaredstore.push_frame(code.declared)
         self.m.sep()
 
     def calc_expr(self, expr, emit=False):

@@ -7,13 +7,18 @@ template = """\
 <%
 def double(x):
     return x + x
+
 def rstrip(x):
     return x.rstrip()
+
 %>
 
 %if (x % 2) == 0:
 ${hello|double|double|rstrip}
   %if x == 10:
+    # this is comment
+<%doc> comment </%doc>
+    <%c["xs"].append("hai")%>
     ${boo}
   %endif
 %endif
