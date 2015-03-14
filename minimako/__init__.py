@@ -20,7 +20,7 @@ marker = object()
 {pythoncode} :: '<%' {text} '%>'
 {if} :: '%if' {expr} ':' {text} ['%elif' {text} ':' {text}]* ['%else' {text} ':' {text}]? '%endif'
 {for} :: '%for' {expr} 'in' {expr} ':' {text} %endfor
-{deftag} :: '<%def' {defname} '>' {text} '</%def>'
+{deftag} :: '<%def' {defname} '>' {text} '</%def>'  # not support
 {expr} :: {text - {newline}} | '(' {text} ')'
 {newline} :: '\n'
 {text} :: [{expr} '\n']+
@@ -52,7 +52,7 @@ begin_for = Intern("%for")
 end_for = Intern("%endfor")
 
 
-class Lexer(re.Scanner):
+class Scanner(re.Scanner):
     def __init__(self, *args, **kwargs):
         super(Lexer, self).__init__(*args, **kwargs)
         self.body = []
@@ -68,7 +68,7 @@ class Lexer(re.Scanner):
             self.scan(line)
 
 
-Scanner = partial(Lexer, [
+Lexer = partial(Scanner, [
     ('\s*<%doc>(.+)(?=</%doc>)', lambda s, x: s.extend([begin_doc, s.match.group(1)])),
     ("\s*<%(.+)(?=%>)", lambda s, x: s.extend([begin_code, s.match.group(1)])),
     ('\s*<%doc>', lambda s, x: s.append(begin_doc)),
@@ -398,11 +398,11 @@ class Template(object):
             logger.debug("cached: hash=%s", hash(self.s))
             return self.cache_manager[self.s]
         else:
-            scanner = Scanner()
+            lexer = Lexer()
             parser = Parser()
             compiler = Compiler()
-            scanner(self.s)
-            parser(scanner.body)
+            lexer(self.s)
+            parser(lexer.body)
             compiler(parser.body, "render")
             env = {}
             code = str(compiler.m)
@@ -420,10 +420,10 @@ if __name__ == "__main__":
     print("========================================")
     print("compiled")
     print("========================================")
-    scanner = Scanner()
-    scanner(template)
+    lexer = Lexer()
+    lexer(template)
     parser = Parser()
-    parser(scanner.body)
+    parser(lexer.body)
     compiler = Compiler()
     compiler(parser.body)
     for i, line in enumerate(str(compiler.m).split("\n")):

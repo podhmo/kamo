@@ -3,35 +3,48 @@ minimako
 
 almost subset of mako.
 
-::
+.. code-block:: python
 
-  <%doc>
-  minimako
-  </%doc>
+  # -*- coding:utf-8 -*-
+  import logging
+  from minimako import Template
+  # logging.basicConfig(level=logging.DEBUG)
 
-  ## this is comment
 
+  template = Template("""
   <%
-  def double(x):
-      return x + x
+  def decorate(s):
+      return "** {} **".format(s)
   %>
+  <%from datetime import datetime%>
 
-  %if x == "10":
-    ${hello}
-  %else:
-    ${hello|double}
-  %endif
+  ${greeting|decorate}
+  ${name}: this is my first sample! (now: ${datetime.now()})
+  """)
 
-  %for i,x in enumerate(xs):
-  * ${i} ${x}
-  %endfor
 
-  <%def name="element(tag='a')">
-  <${tag}>${caller.body}</${tag}>
-  </%def>
+  print(template.render(name="foo", greeting="chears"))
+  print("----------------------------------------")
+  print(template.render(name="boo", greeting="chears"))
 
-  <%self:element tag="p">
-  hello
-  </%self:element>
+generated function is such as below.
+
+.. code-block:: python
+
+  def render(io, **c):
+      write = io.write
+      def decorate(s):
+          return "** {} **".format(s)
+
+      from datetime import datetime
+
+      write(str(decorate(c['greeting'])))
+      write('\n')
+
+      write(str(c['name']))
+      write(': this is my first sample! (now: ')
+      write(str(datetime.now()))
+      write(')')
+      write('\n')
 
 

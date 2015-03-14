@@ -1,7 +1,7 @@
 # -*- coding:utf-8 -*-
 import logging
 from minimako import Template
-# logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
 
 
 template = Template("""
