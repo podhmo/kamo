@@ -3,9 +3,11 @@ import logging
 logger = logging.getLogger(__name__)
 import ast
 import re
+from prestring.python import PythonModule, NEWLINE
 from functools import partial
 from collections import namedtuple
-# newline, multiline ?
+from io import StringIO
+from minimako.expr import WithContextExprVistor
 
 """
 {module} :: {statement}+
@@ -45,8 +47,6 @@ begin_elif = Intern("%elif")
 end_if = Intern("%endif")
 begin_for = Intern("%for")
 end_for = Intern("%endfor")
-begin_paren = Intern("(")
-end_paren = Intern(")")
 
 
 class Lexer(re.Scanner):
@@ -57,6 +57,9 @@ class Lexer(re.Scanner):
     def append(self, x):
         self.body.append(x)
 
+    def extend(self, x):
+        self.body.extend(x)
+
     def __call__(self, body):
         for line in body.split("\n"):
             self.scan(line)
@@ -65,7 +68,7 @@ class Lexer(re.Scanner):
 Scanner = partial(Lexer, [
     ('\s*<%doc>', lambda s, x: s.append(begin_doc)),
     ('\s*</%doc>', lambda s, x: s.append(end_doc)),
-    ('\s*## .*', lambda s, x: s.append(comment)),
+    ('\s*## .*', lambda s, x: s.extend((comment, x.lstrip("## ")))),
     ("\s*<%", lambda s, x: s.append(begin_code)),
     ("\s*%>", lambda s, x: s.append(end_doc)),
     ("\s*%if", lambda s, x: s.append(begin_if)),
@@ -79,10 +82,11 @@ Scanner = partial(Lexer, [
 
 
 Module = namedtuple("Module", "body")
-Doc = namedtuple("Doc", "body")
+Doc = namedtuple("Doc", "body multiline")
 Code = namedtuple("Code", "body")
 Text = namedtuple("Text", "body")
-If = namedtuple("If", "keyword predicate body")  # xxx: include if, elif, else
+Expr = namedtuple("Expr", "body ast filters")
+If = namedtuple("If", "keyword expr body")  # xxx: include if, elif, else
 For = namedtuple("For", "keyword expr src body")
 
 
@@ -111,8 +115,8 @@ class Parser(object):
         self.depth -= 1
         self.frame = frame
 
-    def parse_expr(self, expr):  # hmm.
-        return ast.parse(expr).body[0]
+    def parse_expr(self, expr, filters=None):  # hmm.
+        return Expr(expr, ast.parse(expr).body[0], filters=filters or [])
 
     def __call__(self, tokens):
         self.i = 0
@@ -141,8 +145,7 @@ class Parser(object):
         elif t is end_for:
             self.parse_end_for(tokens)
         else:
-            self.frame.append(Text(tokens[self.i]))
-            self.i += 1
+            self.parse_text(tokens)
 
     def parse_doc(self, tokens):
         self.i += 1  # skip
@@ -151,10 +154,11 @@ class Parser(object):
             body.append(tokens[self.i])
             self.i += 1
         self.i += 1  # skip
-        self.frame.append(Doc(body))
+        self.frame.append(Doc(body, multiline=True))
 
     def parse_comment(self, tokens):
-        self.frame.append(Doc([tokens[self.i]]))
+        self.i += 1  # skip
+        self.frame.append(Doc([tokens[self.i]], multiline=False))
         self.i += 1
 
     def parse_code(self, tokens):
@@ -219,6 +223,109 @@ class Parser(object):
         self.frame.append(For(keyword, expr, src, body))
         self.i += 1  # skip
 
+    emit_var_rx = re.compile("\${[^}]+}")  # 雑
+
+    def parse_text(self, tokens):
+        body = []
+        for token, is_emit_var in split_with(self.emit_var_rx, tokens[self.i]):
+            if is_emit_var:
+                token = token[2:-1]  # ${foo} -> foo
+                token_with_filter = [e.strip(" ") for e in token.split("|")]  # foo|bar|boo -> [foo, bar, boo]
+                token = token_with_filter[0]
+                token = self.parse_expr(token, token_with_filter[1:])
+            body.append((token, is_emit_var))
+        self.frame.append(Text(body))
+        self.i += 1
+
+
+def split_with(rx, sentence):
+    r = []
+
+    while sentence:
+        m = rx.search(sentence)
+        if not m:
+            r.append((sentence, False))
+            return r
+        if not m.start() == 0:
+            r.append((sentence[:m.start()], False))
+        r.append((m.group(0), True))
+        sentence = sentence[m.end():]
+    return r
+
+
+class Compiler(object):
+    def __init__(self, m=None, default=""):
+        self.depth = 0
+        self.m = PythonModule()
+        self.variables = None
+        self.default = default
+
+    def __call__(self, tokens, name="render", args="io, **context"):
+        """
+        create:
+        def render(io, **context):
+            context.get("foo", "")
+        """
+        with self.m.def_(name, args):
+            self.variables = self.m.submodule()
+            self.variables.stmt("write = io.write")
+            self.variables.stmt("get = context.get")
+            for t in tokens:
+                self.visit(t)
+
+    def visit(self, t):
+        method = getattr(self, "visit_{}".format(t.__class__.__name__.lower()))
+        method(t)
+
+    def visit_text(self, node):
+        for token, is_visit_var in node.body:
+            if is_visit_var:
+                self.m.stmt("write({})".format(self.calc_expr(token)))
+            else:
+                self.m.stmt("write({!r})".format(token))
+        self.m.append(NEWLINE)
+
+    def visit_doc(self, doc):
+        if doc.multiline:
+            self.m.stmt("########################################")
+        for line in doc.body:
+            self.m.stmt("# {}".format(line))
+        if doc.multiline:
+            self.m.stmt("########################################")
+            self.m.sep()
+
+    def visit_code(self, code):
+        for line in code.body:
+            self.m.stmt(line)
+        self.m.sep()
+
+    def calc_expr(self, expr):
+        io = StringIO()
+        v = WithContextExprVistor(io, getter="get({{!r}}, {!r})".format(self.default))
+        v.visit(expr.ast)
+        result = io.getvalue()
+        if expr.filters:
+            for f in expr.filters:
+                result = "{}({})".format(f, result)
+        return result
+
+    def visit_if(self, node):
+        self.m.stmt("{} {}:".format(node.keyword, self.calc_expr(node.expr)))
+        with self.m.scope():
+            self._visit_children(node.body)
+
+    def visit_for(self, node):
+        self.m.stmt("{} {} in {}:".format(node.keyword, self.calc_expr(node.expr), self.calc_expr(node.src)))
+        with self.m.scope():
+            self._visit_children(node.body)
+
+    def _visit_children(self, node):
+        if isinstance(node, list):
+            for c in node:
+                self._visit_children(c)
+        else:
+            self.visit(node)
+
 
 if __name__ == "__main__":
     from minimako._sample import template
@@ -226,6 +333,6 @@ if __name__ == "__main__":
     scanner(template)
     parser = Parser()
     parser(scanner.body)
-    print(parser.body)
-    #print(scanner.body)
-    
+    compiler = Compiler()
+    compiler(parser.body)
+    print(compiler.m)

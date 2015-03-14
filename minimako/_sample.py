@@ -12,7 +12,7 @@ def double(x):
 %>
 
 %if x == "10":
-  ${hello}
+  ${hello|double|double}
   %if x == "20":
     ${boo}
   %endif
