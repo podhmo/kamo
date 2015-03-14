@@ -234,49 +234,27 @@ class ExprVisitor(ast.NodeVisitor):
 class CollectVarNameVisitor(ast.NodeVisitor):
     def __init__(self, r):
         self.r = r
-        self.is_internal = False
 
     def visit_Name(self, node):
-        if not self.is_internal:
-            self.r.add(node.id)
+        self.r.add(node.id)
 
     def visit_FunctionDef(self, node):
-        if not self.is_internal:
-            self.r.add(node.name)
-            try:
-                self.is_internal = True
-                self.generic_visit(node)
-            finally:
-                self.is_internal = False
+        self.r.add(node.name)
 
     def visit_ClassDef(self, node):
-        if not self.is_internal:
-            self.r.add(node.name)
-            try:
-                self.is_internal = True
-                self.generic_visit(node)
-            finally:
-                self.is_internal = False
+        self.r.add(node.name)
 
     def visit_Assign(self, node):
-        if not self.is_internal:
-            for target in node.targets:
-                self.r.add(target.id)
-            try:
-                self.is_internal = True
-                self.visit(node.value)
-            finally:
-                self.is_internal = False
+        for target in node.targets:
+            self.r.add(target.id)
 
     def visit_ImportFrom(self, node):
-        if not self.is_internal:
-            for item in node.names:
-                self.r.add(item.asname or item.name)
+        for item in node.names:
+            self.r.add(item.asname or item.name)
 
     def visit_Import(self, node):
-        if not self.is_internal:
-            for item in node.names:
-                self.r.add(item.name)
+        for item in node.names:
+            self.r.add(item.name)
 
 
 def collect_variable_name(node):
