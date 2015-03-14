@@ -71,18 +71,18 @@ class Scanner(re.Scanner):
 
 Lexer = partial(Scanner, [
     ('\s*<%doc>(.+)(?=</%doc>)', lambda s, x: s.extend([begin_doc, s.match.group(1)])),
-    ("\s*<%(.+)(?=%>)", lambda s, x: s.extend([begin_code, s.match.group(1)])),
+    ("\s*<%\s*(.+)\s*(?=%>)", lambda s, x: s.extend([begin_code, s.match.group(1)])),
     ('\s*<%doc>', lambda s, x: s.append(begin_doc)),
     ('\s*</%doc>', lambda s, x: s.append(end_doc)),
     ('\s*## (.*)', lambda s, x: s.extend((comment, s.match.group(1)))),
     ("\s*<%", lambda s, x: s.append(begin_code)),
     ("\s*%>", lambda s, x: s.append(end_doc)),
-    ("\s*%if", lambda s, x: s.append(begin_if)),
-    ("\s*%elif", lambda s, x: s.append(begin_elif)),
-    ("\s*%else", lambda s, x: s.append(begin_else)),
-    ("\s*%endif", lambda s, x: s.append(end_if)),
-    ("\s*%for", lambda s, x: s.append(begin_for)),
-    ("\s*%endfor", lambda s, x: s.append(end_for)),
+    ("\s*%\s*if", lambda s, x: s.append(begin_if)),
+    ("\s*%\s*elif", lambda s, x: s.append(begin_elif)),
+    ("\s*%\s*else", lambda s, x: s.append(begin_else)),
+    ("\s*%\s*endif", lambda s, x: s.append(end_if)),
+    ("\s*%\s*for", lambda s, x: s.append(begin_for)),
+    ("\s*%\s*endfor", lambda s, x: s.append(end_for)),
     (".+", lambda s, x: s.append(x))
 ])
 
