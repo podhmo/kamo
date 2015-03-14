@@ -42,6 +42,8 @@ class Line(object):
 
 begin_doc = Intern("<%doc>")
 end_doc = Intern("</%doc>")
+begin_def = Intern("<%def>")
+end_def = Intern("</%def>")
 comment = Intern("##")
 begin_code = Intern("<%")
 end_code = Intern("%>")
@@ -75,6 +77,8 @@ Lexer = partial(Scanner, [
     ("\s*<%\s*(.+)\s*(?=%>)", lambda s, x: s.extend([begin_code, s.match.group(1)])),
     ('\s*<%doc>', lambda s, x: s.append(begin_doc)),
     ('\s*</%doc>', lambda s, x: s.append(end_doc)),
+    ('\s*<%def\s*name="([^>]+)"\s*>', lambda s, x: s.extend([begin_def, s.match.group(1)])),
+    ('\s*</%def>', lambda s, x: s.append(end_def)),
     ('\s*## (.*)', lambda s, x: s.extend((comment, s.match.group(1)))),
     ("\s*<%", lambda s, x: s.append(begin_code)),
     ("\s*%>", lambda s, x: s.append(end_doc)),
@@ -90,6 +94,7 @@ Lexer = partial(Scanner, [
 
 Doc = namedtuple("Doc", "body multiline")
 Code = namedtuple("Code", "body ast declared")
+Def = namedtuple("Def", "body name args declared")
 Text = namedtuple("Text", "body")
 Expr = namedtuple("Expr", "body ast decorators declared")
 If = namedtuple("If", "keyword expr body")  # xxx: include if, elif, else
@@ -160,6 +165,8 @@ class Parser(object):
             self.parse_for(tokens)
         elif t is end_for:
             self.parse_end_for(tokens)
+        elif t is begin_def:
+            self.parse_def(tokens)
         else:
             self.parse_text(tokens)
 
@@ -190,6 +197,29 @@ class Parser(object):
         self.frame.append(Code(body,
                                ast_node,
                                declared=declared))
+
+    def parse_def(self, tokens):
+        self.i += 1  # skip
+        body = []
+        arguments = tokens[self.i]
+        name = arguments.split("(", 1)[0]
+        args = [e.strip() for e in arguments[len(name) + 1:-1].split(",")]
+        self.i += 1
+
+        while tokens[self.i] is not end_def:
+            body.append(tokens[self.i])
+            self.i += 1
+        self.i += 1  # skip
+
+        parsedbody = []
+        for token, is_emitting_var in split_with(self.emit_var_rx, "\n".join(body)):
+            if is_emitting_var:
+                token = token[2:-1]  # ${foo} -> foo
+                token_with_filter = [e.strip(" ") for e in token.split("|")]  # foo|bar|boo -> [foo, bar, boo]
+                token = token_with_filter[0]
+                token = self.parse_expr(token, token_with_filter[1:])
+            parsedbody.append((token, is_emitting_var))
+        self.frame.append(Def([Text(parsedbody)], name, args, declared=set([name])))
 
     def parse_if(self, tokens):
         self.i += 1  # skip
@@ -284,8 +314,8 @@ class _DeclaredStore(object):
     def push_frame(self, s):
         self.stack.append(s)
 
-    def pop_frame(self, s):
-        self.stack.pop(s)
+    def pop_frame(self):
+        self.stack.pop()
 
 
 class Optimizer(object):
@@ -319,6 +349,10 @@ class Optimizer(object):
                     body = []
                     self.optimize(t.body, Text([]), body)
                     result.append(For(t.keyword, t.expr, t.src, body))
+                elif isinstance(t, Def):
+                    body = []
+                    self.optimize(t.body, Text([]), body)
+                    result.append(Def(body, t.name, t.args, t.declared))
                 else:
                     result.append(t)
 
@@ -383,7 +417,6 @@ class Compiler(object):
                 self.m.stmt("write({!r})".format(token))
         if not self.optimized:
             self.m.stmt("write('\\n')")
-        self.m.append(NEWLINE)
 
     def visit_doc(self, doc):
         if doc.multiline:
@@ -397,8 +430,19 @@ class Compiler(object):
     def visit_code(self, code):
         for line in code.body.split("\n"):  # xxx:
             self.m.stmt(line)
-        self.declaredstore.push_frame(code.declared)
+        self.declaredstore.stack[-1].update(code.declared)
         self.m.sep()
+
+    def visit_def(self, node):
+        self.declaredstore.stack[-1].update(node.declared)
+        with self.m.def_(node.name, *node.args):
+            try:
+                self.declaredstore.push_frame(set(node.args))
+                for text in node.body:
+                    self.visit_text(text)
+                self.m.return_("''")
+            finally:
+                self.declaredstore.pop_frame()
 
     def calc_expr(self, expr, emit=False):
         io = StringIO()
@@ -424,8 +468,11 @@ class Compiler(object):
     def visit_for(self, node):
         self.m.stmt("{} {} in {}:".format(node.keyword, node.expr.body, self.calc_expr(node.src)))
         self.declaredstore.push_frame(node.expr.declared)
-        with self.m.scope():
-            self._visit_children(node.body)
+        try:
+            with self.m.scope():
+                self._visit_children(node.body)
+        finally:
+            self.declaredstore.pop_frame()
 
     def _visit_children(self, node):
         if isinstance(node, list):

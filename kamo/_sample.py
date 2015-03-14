@@ -13,6 +13,12 @@ def rstrip(x):
 
 %>
 
+<%def name="tag(s, e)">
+<${e}>${s}</${e}>
+</%def>
+
+${tag("foo", "a")}
+
 %if (x % 2) == 0:
 ${hello|double|double|rstrip}
   % if x == 10:
