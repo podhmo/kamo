@@ -21,7 +21,7 @@ marker = object()
 {pythoncode} :: '<%' {text} '%>'
 {if} :: '%if' {expr} ':' {text} ['%elif' {text} ':' {text}]* ['%else' {text} ':' {text}]? '%endif'
 {for} :: '%for' {expr} 'in' {expr} ':' {text} %endfor
-{deftag} :: '<%def' {defname} '>' {text} '</%def>'  # not support
+{deftag} :: '<%def' {defname} '>' {text} '</%def>'
 {expr} :: {text - {newline}} | '(' {text} ')'
 {newline} :: '\n'
 {text} :: [{expr} '\n']+

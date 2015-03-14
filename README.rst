@@ -40,11 +40,8 @@ generated function is such as below.
 
       write(str(decorate(c['greeting'])))
       write('\n')
-
       write(str(c['name']))
       write(': this is my first sample! (now: ')
       write(str(datetime.now()))
-      write(')')
-      write('\n')
-
+      write(')\n')
 
