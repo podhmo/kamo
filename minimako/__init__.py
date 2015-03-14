@@ -122,10 +122,10 @@ class Parser(object):
 
     def parse_expr(self, expr, decorators=None, is_declared=True):  # hmm.
         ast_node = ast.parse(expr).body[0]
-        if not is_declared:
-            declared = set()
-        else:
+        if is_declared:
             declared = collect_variable_name(ast_node)
+        else:
+            declared = set()
         return Expr(expr,
                     ast_node,
                     decorators=decorators or [],
@@ -181,7 +181,8 @@ class Parser(object):
             body.append(tokens[self.i])
             self.i += 1
         self.i += 1  # skip
-        self.frame.append(Code(body))
+        code = self.parse_expr("\n".join(body), is_declared=True)
+        self.frame.append(Code(code))
 
     def parse_if(self, tokens):
         self.i += 1  # skip
@@ -328,8 +329,9 @@ class Compiler(object):
             self.m.sep()
 
     def visit_code(self, code):
-        for line in code.body:
+        for line in code.body.body.split("\n"):  # xxx:
             self.m.stmt(line)
+        self.declaredstore.push_frame(code.body.declared)
         self.m.sep()
 
     def calc_expr(self, expr, emit=False):
@@ -364,6 +366,51 @@ class Compiler(object):
             self.visit(node)
 
 
+class CacheManager(object):
+    def __init__(self):
+        self.cache = {}
+
+    def __getitem__(self, s):
+        return self.cache[hash(s)]
+
+    def __setitem__(self, s, v):
+        self.cache[hash(s)] = v
+
+    def __contains__(self, s):
+        return hash(s) in self.cache
+
+
+_default_cache_manager = CacheManager()
+
+
+class Template(object):
+    def __init__(self, s, cache_manager=_default_cache_manager):
+        self.s = s
+        self.cache_manager = cache_manager
+
+    def render(self, **kwargs):
+        io = StringIO()
+        self.get_render_function()(io, **kwargs)
+        return io.getvalue()
+
+    def get_render_function(self):
+        if self.s in self.cache_manager:
+            logger.debug("cached: hash=%s", hash(self.s))
+            return self.cache_manager[self.s]
+        else:
+            scanner = Scanner()
+            parser = Parser()
+            compiler = Compiler()
+            scanner(self.s)
+            parser(scanner.body)
+            compiler(parser.body, "render")
+            env = {}
+            code = str(compiler.m)
+            logger.debug("compiled code:\n%s", code)
+            exec(code, env)
+            fn = self.cache_manager[self.s] = env["render"]
+            return fn
+
 if __name__ == "__main__":
     from minimako._sample import template
     print("========================================")
@@ -379,11 +426,12 @@ if __name__ == "__main__":
     parser(scanner.body)
     compiler = Compiler()
     compiler(parser.body)
-    print(compiler.m)
+    for i, line in enumerate(str(compiler.m).split("\n")):
+        print("{:3< }: {}".format(i, line))
     env = {}
     exec(str(compiler.m), env)
     import sys
     print("========================================")
     print("output")
     print("========================================")
-    env["render"](sys.stdout, x=10, xs=[1, 2, 3], hello="hello", boo="boooo!")
+    env["render"](sys.stdout, x=10, xs=["foo", "bar", "boo"], hello="hello ", boo="(o_0)")
