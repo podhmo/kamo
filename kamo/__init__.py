@@ -391,7 +391,7 @@ class Optimizer(object):
 class Compiler(object):
     def __init__(self, m=None, default="''", getter="c[{!r}]", default_decorators=["str"]):
         self.depth = 0
-        self.m = PythonModule()
+        self.m = m or PythonModule()
         self.variables = None
         self.toplevel = None
         self.default = default
@@ -504,73 +504,15 @@ class TemplateNotFound(Exception):
     pass
 
 
-class TemplateManager(object):
-    def __init__(self, directories=["."], optimize=True, tmpdir=tempfile.gettempdir()):
-        self.directories = directories
-        self.template_cache = {}
-        self.module_cache = {}  # xxx?
-        self.optimize = optimize
-        self.tmpdir = tmpdir
-
-    def lookup(self, filename):
-        if filename in self.template_cache:
-            return self.template_cache[filename]
-        for d in self.directories:
-            path = os.path.join(d, filename)
-            if os.path.exists(path):
-                return self.load_template(filename, path)
-        raise TemplateNotFound(filename)
-
-    def load_template(self, filename, path):
-        template = Template(None,
-                            module_id=filename,
-                            path=path,
-                            tmpdir=self.tmpdir,
-                            manager=self,
-                            optimize=self.optimize)
-        self.template_cache[filename] = template
-        return template
-
-    def create_template(self, s):
-        return Template(s,
-                        module_id=None,
-                        path=None,
-                        tmpdir=self.tmpdir,
-                        manager=self,
-                        optimize=self.optimize)
-        self.template_cache[template.module_id] = template
-        return template
-
-    def load_module(self, module_id, path):
-        if module_id in self.module_cache:
-            logger.info("cached: module_id=%s", module_id)
-            return self.module_cache[module_id]
-        try:
-            module_path = os.path.join(self.tmpdir, module_id)
-            if path is not None and os.path.exists(path) and os.path.exists(module_path):
-                file_mtime = os.stat(path)[stat.ST_MTIME]
-                if file_mtime >= os.stat(module_path)[stat.ST_MTIME]:
-                    logger.info("cache is obsoluted: module_id=%s (mtime=%s)", module_id, file_mtime)
-                    return None
-            module = load_module(module_id, module_path)
-            self.module_cache[module_id] = module
-            return module
-        except FileNotFoundError:
-            return None
-
-
-default_manager = TemplateManager([])
-
-
 class Template(object):
     def __init__(self, source=None, module_id=None, path=None, tmpdir=None,
-                 manager=default_manager, optimize=True, nocache=False):
+                 manager=None, optimize=True, nocache=False):
         # from file path is not None, from string source is not None
         self._source = source
         self.module_id = module_id or hashlib.md5(source.encode("utf-8")).hexdigest()
         self.tmpdir = tmpdir
         self.path = path
-        self.manager = manager
+        self.manager = manager or get_default_manager()
         self.optimize = optimize
         self.nocache = nocache
 
@@ -604,10 +546,11 @@ class Template(object):
     def get_render_function(self):
         return self.get_render_module().render
 
-    def _compile(self, source):
+    def _compile(self):
         lexer = Lexer()
         parser = Parser()
         compiler = Compiler()
+        source = self.source
         if self.optimize:
             optimizer = Optimizer()
             return compiler(optimizer(parser(lexer(source))), name="render")
@@ -617,6 +560,77 @@ class Template(object):
     def compile(self):
         code = str(self._compile(self.source))
         return _compile(self.module_id, code, tmpdir=None)
+
+
+class TemplateManager(object):
+    def __init__(self, directories=["."], optimize=True,
+                 template_factory=None,
+                 tmpdir=tempfile.gettempdir()):
+        self.directories = directories
+        self.template_cache = {}
+        self.module_cache = {}  # xxx?
+        self.optimize = optimize
+        self.tmpdir = tmpdir
+        self.template_factory = template_factory or Template
+
+    def lookup(self, filename):
+        if filename in self.template_cache:
+            return self.template_cache[filename]
+        for d in self.directories:
+            path = os.path.join(d, filename)
+            if os.path.exists(path):
+                return self.load_template(filename, path)
+        raise TemplateNotFound(filename)
+
+    def load_template(self, filename, path):
+        template = self.template_factory(None,
+                                         module_id=filename,
+                                         path=path,
+                                         tmpdir=self.tmpdir,
+                                         manager=self,
+                                         optimize=self.optimize)
+        self.template_cache[filename] = template
+        return template
+
+    def create_template(self, s):
+        return self.template_factory(s,
+                                     module_id=None,
+                                     path=None,
+                                     tmpdir=self.tmpdir,
+                                     manager=self,
+                                     optimize=self.optimize)
+        self.template_cache[template.module_id] = template
+        return template
+
+    def load_module(self, module_id, path):
+        if module_id in self.module_cache:
+            logger.info("cached: module_id=%s", module_id)
+            return self.module_cache[module_id]
+        try:
+            module_path = os.path.join(self.tmpdir, module_id)
+            if path is not None and os.path.exists(path) and os.path.exists(module_path):
+                file_mtime = os.stat(path)[stat.ST_MTIME]
+                if file_mtime >= os.stat(module_path)[stat.ST_MTIME]:
+                    logger.info("cache is obsoluted: module_id=%s (mtime=%s)", module_id, file_mtime)
+                    return None
+            module = load_module(module_id, module_path)
+            self.module_cache[module_id] = module
+            return module
+        except FileNotFoundError:
+            return None
+
+
+default_manager = TemplateManager([])
+
+
+def get_default_manager():
+    global default_manager
+    return default_manager
+
+
+def set_default_manager(manager):
+    global default_manager
+    default_manager = manager
 
 
 def load_module(module_id, path):
