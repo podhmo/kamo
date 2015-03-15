@@ -54,7 +54,9 @@ foo.kamo ::
 
   ${name}: yup
 
-foo.py ::
+foo.py
+
+.. code-block:: python
 
   from kamo import TemplateManager
   tm = TemplateManager(directories=["."])
