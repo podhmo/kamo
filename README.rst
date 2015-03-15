@@ -45,3 +45,18 @@ generated function is such as below.
       write(': this is my first sample! (now: ')
       write(str(datetime.now()))
       write(')\n')
+
+
+lookup template
+----------------------------------------
+
+foo.kamo ::
+
+  ${name}: yup
+
+foo.py ::
+
+  from kamo import TemplateManager
+  tm = TemplateManager(directories=["."])
+  template = tm.lookup("foo.kamo")    # find template from ["./foo.kamo"]
+  print(template.render(name="foo"))
