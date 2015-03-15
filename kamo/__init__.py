@@ -323,53 +323,59 @@ class Optimizer(object):
         last_is_text = False
         for t in tokens:
             if isinstance(t, Text):
-                is_emitting_var = False
+                emitting_status = False
                 for pair in t.body:
-                    if pair[1] == is_emitting_var:  # is_emitting_var
+                    if pair[1] == emitting_status:  # emitting_status
                         text.body.append(pair)
                     else:
-                        is_emitting_var = not is_emitting_var
-                        if not (len(text.body) < 1 or text.body[0][0] == "\n"):
-                            self.compact(text)
-                            result.append(text)
+                        emitting_status = not emitting_status
+                        self.compact(text)
+                        result.append(text)
                         text = Text([pair])
-                text.body.append(("\n", False))
+                if text.body[-1][1] is False:
+                    text.body.append(("\n", False))
+                else:
+                    self.compact(text)
+                    result.append(text)
+                    text = Text([("\n", False)])
                 last_is_text = True
             else:
                 if last_is_text:
+                    self.compact(text)
                     result.append(text)
-                    text = Text([])
+                    text = Text([("", False)])
                     last_is_text = False
 
                 if isinstance(t, If):
                     body = []
-                    self.optimize(t.body, Text([]), body)
+                    self.optimize(t.body, Text([("", False)]), body)
                     result.append(If(t.keyword, t.expr, body))
                 elif isinstance(t, For):
                     body = []
-                    self.optimize(t.body, Text([]), body)
+                    self.optimize(t.body, Text([("", False)]), body)
                     result.append(For(t.keyword, t.expr, t.src, body))
                 elif isinstance(t, Def):
                     body = []
-                    self.optimize(t.body, Text([]), body)
+                    self.optimize(t.body, Text([("", False)]), body)
                     result.append(Def(body, t.name, t.args, t.declared))
                 else:
                     result.append(t)
 
         if last_is_text:
-            if not (len(text.body) < 1 or text.body[0][0] == "\n"):
-                self.compact(text)
-                result.append(text)
+            self.compact(text)
+            result.append(text)
 
     def compact(self, text):
-        if text.body and text.body[0][1] is False:  # text
+        if text.body[0][1] is False:  # text
             body = "".join(pair[0] for pair in text.body)
             text.body.clear()
             text.body.append((body, False))
+        if text.body[0][0] == "":
+            text.body.pop(0)
 
     def __call__(self, tokens):
         r = []
-        self.optimize(tokens, Text([]), r)
+        self.optimize(tokens, Text([("", False)]), r)
         self.body = Optimized(r)
         return self.body
 
