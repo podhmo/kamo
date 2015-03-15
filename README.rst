@@ -8,7 +8,7 @@ almost subset of mako.
   # -*- coding:utf-8 -*-
   import logging
   from kamo import Template
-  # logging.basicConfig(level=logging.DEBUG)
+  logging.basicConfig(level=logging.DEBUG)
 
 
   template = Template("""
@@ -16,7 +16,7 @@ almost subset of mako.
   def decorate(s):
       return "** {} **".format(s)
   %>
-  <%from datetime import datetime%>
+  <%!from datetime import datetime%>
 
   ${greeting|decorate}
   ${name}: this is my first sample! (now: ${datetime.now()})
@@ -31,12 +31,13 @@ generated function is such as below.
 
 .. code-block:: python
 
+  from datetime import datetime
+
+
   def render(io, **c):
       write = io.write
       def decorate(s):
           return "** {} **".format(s)
-
-      from datetime import datetime
 
       write(str(decorate(c['greeting'])))
       write('\n')
@@ -44,4 +45,3 @@ generated function is such as below.
       write(': this is my first sample! (now: ')
       write(str(datetime.now()))
       write(')\n')
-

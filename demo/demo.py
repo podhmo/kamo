@@ -9,7 +9,7 @@ template = Template("""
 def decorate(s):
     return "** {} **".format(s)
 %>
-<%from datetime import datetime%>
+<%!from datetime import datetime%>
 
 ${greeting|decorate}
 ${name}: this is my first sample! (now: ${datetime.now()})
