@@ -4,6 +4,10 @@ logger = logging.getLogger(__name__)
 import ast
 import re
 import os.path
+import tempfile
+import shutil
+import hashlib
+import stat
 from prestring.python import PythonModule
 from functools import partial
 from collections import namedtuple
@@ -12,6 +16,7 @@ from kamo.expr import (
     WithContextExprVistor,
     collect_variable_name
 )
+
 marker = object()
 """
 {module} :: {statement}+
@@ -495,33 +500,17 @@ class Compiler(object):
             self.visit(node)
 
 
-class RenderFunctionCache(object):
-    def __init__(self):
-        self.cache = {}
-
-    def __getitem__(self, s):
-        return self.cache[s]
-
-    def __setitem__(self, s, v):
-        self.cache[s] = v
-
-    def __contains__(self, s):
-        return s in self.cache
-
-
-default_cache = RenderFunctionCache()
-
-
 class TemplateNotFound(Exception):
     pass
 
 
 class TemplateManager(object):
-    def __init__(self, directories=["."], cache=default_cache, optimize=True, tempdir=tempfile.gettempdir()):
+    def __init__(self, directories=["."], optimize=True, tmpdir=tempfile.gettempdir()):
         self.directories = directories
-        self.render_cache = cache
         self.template_cache = {}
+        self.module_cache = {}  # xxx?
         self.optimize = optimize
+        self.tmpdir = tmpdir
 
     def lookup(self, filename):
         if filename in self.template_cache:
@@ -533,22 +522,65 @@ class TemplateManager(object):
         raise TemplateNotFound(filename)
 
     def load_template(self, filename, path):
-        with open(path) as rf:
-            template = Template(rf.read(), hashvalue=filename, cache=self.render_cache, optimize=self.optimize)
+        template = Template(None,
+                            module_id=filename,
+                            path=path,
+                            tmpdir=self.tmpdir,
+                            manager=self,
+                            optimize=self.optimize)
         self.template_cache[filename] = template
         return template
 
     def create_template(self, s):
-        return Template(s, hashvalue=hash(s), cache=self.render_cache, optimize=self.optimize)
+        return Template(s,
+                        module_id=None,
+                        path=None,
+                        tmpdir=self.tmpdir,
+                        manager=self,
+                        optimize=self.optimize)
+        self.template_cache[template.module_id] = template
+        return template
+
+    def load_module(self, module_id, path):
+        if module_id in self.module_cache:
+            logger.info("cached: module_id=%s", module_id)
+            return self.module_cache[module_id]
+        try:
+            module_path = os.path.join(self.tmpdir, module_id)
+            if path is not None and os.path.exists(path) and os.path.exists(module_path):
+                file_mtime = os.stat(path)[stat.ST_MTIME]
+                if file_mtime >= os.stat(module_path)[stat.ST_MTIME]:
+                    logger.info("cache is obsoluted: module_id=%s (mtime=%s)", module_id, file_mtime)
+                    return None
+            module = load_module(module_id, module_path)
+            self.module_cache[module_id] = module
+            return module
+        except FileNotFoundError:
+            return None
+
+
+default_manager = TemplateManager([])
 
 
 class Template(object):
-    def __init__(self, s, hashvalue=None, cache=default_cache, optimize=True, nocache=False):
-        self.s = s
-        self.hashvalue = hashvalue or str(hash(self.s))
-        self.cache = cache
-        self.nocache = nocache
+    def __init__(self, source=None, module_id=None, path=None, tmpdir=None,
+                 manager=default_manager, optimize=True, nocache=False):
+        # from file path is not None, from string source is not None
+        self._source = source
+        self.module_id = module_id or hashlib.md5(source.encode("utf-8")).hexdigest()
+        self.tmpdir = tmpdir
+        self.path = path
+        self.manager = manager
         self.optimize = optimize
+        self.nocache = nocache
+
+    @property
+    def source(self):
+        if self._source is not None:
+            return self._source
+        with open(self.path) as rf:
+            self._source = rf.read()
+            return self._source
 
     def render(self, **kwargs):
         io = StringIO()
@@ -556,13 +588,12 @@ class Template(object):
         return io.getvalue()
 
     def get_render_module(self):
-        if not self.nocache and self.hashvalue in self.cache:
-            logger.debug("cached: hash=%s", self.hashvalue)
-            return self.cache[self.hashvalue]
-        else:
-            render = _compile(self.hashvalue, self.s, optimize=self.optimize)
-            fn = self.cache[self.hashvalue] = render
-            return fn
+        if not self.nocache:
+            module = self.manager.load_module(self.module_id, self.path)
+        if module is not None:
+            return module
+        module = _compile(self.module_id, self.source, self.tmpdir, optimize=self.optimize)
+        return module
 
     def get_render_function(self):
         return self.get_render_module().render
@@ -573,7 +604,8 @@ def load_module(module_id, path):
     return machinery.SourceFileLoader(module_id, path).load_module()
 
 
-def _compile(module_id, source, optimize=True):
+def _compile(module_id, source, tmpdir=None, optimize=True):
+    tmpdir = tmpdir or tempfile.gettempdir()
     lexer = Lexer()
     parser = Parser()
     compiler = Compiler()
@@ -585,8 +617,10 @@ def _compile(module_id, source, optimize=True):
     logger.debug("compiled code:\n%s", code)
     fd, path = tempfile.mkstemp()
     os.write(fd, code.encode("utf-8"))
-    shutil.move(path, module_id)
-    return load_module(module_id, module_id)
+    dst = os.path.join(tmpdir, module_id)
+    logger.info("generated module file: %s", dst)
+    shutil.move(path, dst)
+    return load_module(module_id, dst)
 
 
 if __name__ == "__main__":
