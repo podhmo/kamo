@@ -1,7 +1,9 @@
 kamo
 ========================================
 
-almost subset of mako.
+almost subset of mako. this is a toy package.
+
+**don't use in production!!**
 
 .. code-block:: python
 
