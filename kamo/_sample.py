@@ -4,7 +4,7 @@ template = """\
 
 ## this is comment
 
-<%
+<%!
 def double(x):
     return x + x
 

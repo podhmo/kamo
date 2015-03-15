@@ -4,7 +4,7 @@ logger = logging.getLogger(__name__)
 import ast
 import re
 import os.path
-from prestring.python import PythonModule, NEWLINE
+from prestring.python import PythonModule
 from functools import partial
 from collections import namedtuple
 from io import StringIO
@@ -74,13 +74,13 @@ class Scanner(re.Scanner):
 
 Lexer = partial(Scanner, [
     ('\s*<%doc>(.+)(?=</%doc>)', lambda s, x: s.extend([begin_doc, s.match.group(1)])),
-    ("\s*<%\s*(.+)\s*(?=%>)", lambda s, x: s.extend([begin_code, s.match.group(1)])),
+    ("\s*<%(!?)\s*(.+)\s*(?=%>)", lambda s, x: s.extend([begin_code, s.match.group(1), s.match.group(2)])),
     ('\s*<%doc>', lambda s, x: s.append(begin_doc)),
     ('\s*</%doc>', lambda s, x: s.append(end_doc)),
     ('\s*<%def\s*name="([^>]+)"\s*>', lambda s, x: s.extend([begin_def, s.match.group(1)])),
     ('\s*</%def>', lambda s, x: s.append(end_def)),
     ('\s*## (.*)', lambda s, x: s.extend((comment, s.match.group(1)))),
-    ("\s*<%", lambda s, x: s.append(begin_code)),
+    ("\s*<%(!?)", lambda s, x: s.extend([begin_code, s.match.group(1)])),
     ("\s*%>", lambda s, x: s.append(end_doc)),
     ("\s*%\s*if", lambda s, x: s.append(begin_if)),
     ("\s*%\s*elif", lambda s, x: s.append(begin_elif)),
@@ -93,7 +93,7 @@ Lexer = partial(Scanner, [
 
 
 Doc = namedtuple("Doc", "body multiline")
-Code = namedtuple("Code", "body ast declared")
+Code = namedtuple("Code", "body ast declared is_module_level")
 Def = namedtuple("Def", "body name args declared")
 Text = namedtuple("Text", "body")
 Expr = namedtuple("Expr", "body ast decorators declared")
@@ -186,6 +186,8 @@ class Parser(object):
 
     def parse_code(self, tokens):
         self.i += 1  # skip
+        is_module_level = bool(tokens[self.i])
+        self.i += 1  # skip
         body = []
         while tokens[self.i] is not end_doc:
             body.append(tokens[self.i])
@@ -196,7 +198,8 @@ class Parser(object):
         declared = collect_variable_name(ast_node)
         self.frame.append(Code(body,
                                ast_node,
-                               declared=declared))
+                               declared=declared,
+                               is_module_level=is_module_level))
 
     def parse_def(self, tokens):
         self.i += 1  # skip
@@ -385,6 +388,7 @@ class Compiler(object):
         self.depth = 0
         self.m = PythonModule()
         self.variables = None
+        self.toplevel = None
         self.default = default
         self.getter = getter
         self.declaredstore = _DeclaredStore()
@@ -401,6 +405,8 @@ class Compiler(object):
         if isinstance(tokens, Optimized):
             tokens = tokens.tokens
             self.optimized = True
+
+        self.toplevel = self.m.submodule()
         with self.m.def_(name, args):
             self.variables = self.m.submodule()
             self.variables.stmt("write = io.write")
@@ -434,10 +440,11 @@ class Compiler(object):
             self.m.sep()
 
     def visit_code(self, code):
+        m = self.toplevel if code.is_module_level else self.m
         for line in code.body.split("\n"):  # xxx:
-            self.m.stmt(line)
+            m.stmt(line)
         self.declaredstore.stack[-1].update(code.declared)
-        self.m.sep()
+        m.sep()
 
     def visit_def(self, node):
         self.declaredstore.stack[-1].update(node.declared)
