@@ -517,7 +517,7 @@ class TemplateNotFound(Exception):
 
 
 class TemplateManager(object):
-    def __init__(self, directories=["."], cache=default_cache, optimize=True):
+    def __init__(self, directories=["."], cache=default_cache, optimize=True, tempdir=tempfile.gettempdir()):
         self.directories = directories
         self.render_cache = cache
         self.template_cache = {}
@@ -545,7 +545,7 @@ class TemplateManager(object):
 class Template(object):
     def __init__(self, s, hashvalue=None, cache=default_cache, optimize=True, nocache=False):
         self.s = s
-        self.hashvalue = hashvalue or hash(self.s)
+        self.hashvalue = hashvalue or str(hash(self.s))
         self.cache = cache
         self.nocache = nocache
         self.optimize = optimize
@@ -555,24 +555,39 @@ class Template(object):
         self.get_render_function()(io, **kwargs)
         return io.getvalue()
 
-    def get_render_function(self):
+    def get_render_module(self):
         if not self.nocache and self.hashvalue in self.cache:
             logger.debug("cached: hash=%s", self.hashvalue)
             return self.cache[self.hashvalue]
         else:
-            lexer = Lexer()
-            parser = Parser()
-            compiler = Compiler()
-            env = {}
-            if self.optimize:
-                optimizer = Optimizer()
-                code = str(compiler(optimizer(parser(lexer(self.s))), name="render"))
-            else:
-                code = str(compiler(parser(lexer(self.s)), name="render"))
-            logger.debug("compiled code:\n%s", code)
-            exec(code, env)
-            fn = self.cache[self.hashvalue] = env["render"]
+            render = _compile(self.hashvalue, self.s, optimize=self.optimize)
+            fn = self.cache[self.hashvalue] = render
             return fn
+
+    def get_render_function(self):
+        return self.get_render_module().render
+
+
+def load_module(module_id, path):
+    from importlib import machinery
+    return machinery.SourceFileLoader(module_id, path).load_module()
+
+
+def _compile(module_id, source, optimize=True):
+    lexer = Lexer()
+    parser = Parser()
+    compiler = Compiler()
+    if optimize:
+        optimizer = Optimizer()
+        code = str(compiler(optimizer(parser(lexer(source))), name="render"))
+    else:
+        code = str(compiler(parser(lexer(source)), name="render"))
+    logger.debug("compiled code:\n%s", code)
+    fd, path = tempfile.mkstemp()
+    os.write(fd, code.encode("utf-8"))
+    shutil.move(path, module_id)
+    return load_module(module_id, module_id)
+
 
 if __name__ == "__main__":
     from kamo._sample import template
