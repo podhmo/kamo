@@ -1,5 +1,4 @@
 # -*- coding:utf-8 -*-
-import mako
 from kamo import Template
 from datetime import date
 

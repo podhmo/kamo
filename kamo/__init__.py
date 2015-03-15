@@ -587,17 +587,36 @@ class Template(object):
         self.get_render_function()(io, **kwargs)
         return io.getvalue()
 
+    @property
+    def code(self):
+        import inspect
+        return inspect.getsourcefile(self.get_render_module())
+
     def get_render_module(self):
         module = None
         if not self.nocache:
             module = self.manager.load_module(self.module_id, self.path)
         if module is not None:
             return module
-        module = _compile(self.module_id, self.source, self.tmpdir, optimize=self.optimize)
+        module = self.compile()
         return module
 
     def get_render_function(self):
         return self.get_render_module().render
+
+    def _compile(self, source):
+        lexer = Lexer()
+        parser = Parser()
+        compiler = Compiler()
+        if self.optimize:
+            optimizer = Optimizer()
+            return compiler(optimizer(parser(lexer(source))), name="render")
+        else:
+            return compiler(parser(lexer(source)), name="render")
+
+    def compile(self):
+        code = str(self._compile(self.source))
+        return _compile(self.module_id, code, tmpdir=None)
 
 
 def load_module(module_id, path):
@@ -605,16 +624,8 @@ def load_module(module_id, path):
     return machinery.SourceFileLoader(module_id, path).load_module()
 
 
-def _compile(module_id, source, tmpdir=None, optimize=True):
+def _compile(module_id, code, tmpdir=None):
     tmpdir = tmpdir or tempfile.gettempdir()
-    lexer = Lexer()
-    parser = Parser()
-    compiler = Compiler()
-    if optimize:
-        optimizer = Optimizer()
-        code = str(compiler(optimizer(parser(lexer(source))), name="render"))
-    else:
-        code = str(compiler(parser(lexer(source)), name="render"))
     logger.debug("compiled code:\n%s", code)
     fd, path = tempfile.mkstemp()
     os.write(fd, code.encode("utf-8"))
