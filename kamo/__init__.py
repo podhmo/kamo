@@ -558,7 +558,7 @@ class Template(object):
             return compiler(parser(lexer(source)), name="render")
 
     def compile(self):
-        code = str(self._compile(self.source))
+        code = str(self._compile())
         return _compile(self.module_id, code, tmpdir=None)
 
 
