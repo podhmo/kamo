@@ -588,6 +588,7 @@ class Template(object):
         return io.getvalue()
 
     def get_render_module(self):
+        module = None
         if not self.nocache:
             module = self.manager.load_module(self.module_id, self.path)
         if module is not None:
