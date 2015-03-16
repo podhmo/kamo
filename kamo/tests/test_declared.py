@@ -58,6 +58,11 @@ def f(x):
         result = self._callFUT(code)
         self.assertEqual(list(sorted(result)), ["B", "f", "foo0", "foo1"])
 
+    def test_toplevel4(self):
+        code = """import datetime as dt"""
+        result = self._callFUT(code)
+        self.assertEqual(list(sorted(result)), ["dt"])
+
     def test_expr0(self):
         code = "a, b, c"
         result = self._callFUT(code)

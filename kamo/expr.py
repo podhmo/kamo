@@ -254,7 +254,7 @@ class CollectVarNameVisitor(ast.NodeVisitor):
 
     def visit_Import(self, node):
         for item in node.names:
-            self.r.add(item.name)
+            self.r.add(item.asname or item.name)
 
 
 def collect_variable_name(node):
